@@ -9,11 +9,13 @@ import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.net.Uri;
 import android.net.http.SslError;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Message;
 import android.view.View;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
+import android.webkit.JavascriptInterface;
 import android.webkit.SslErrorHandler;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -22,13 +24,15 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
-import android.view.View;
 import android.widget.ProgressBar;
 import android.widget.Toast;
 
 import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 public class MainActivity extends AppCompatActivity {
@@ -45,6 +49,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setupFullscreen();
         setContentView(R.layout.activity_main);
 
         webView = findViewById(R.id.webView);
@@ -84,7 +89,34 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
+    // ✅ NOVO: tela cheia de verdade (sem barra de status/relógio/bateria em cima).
+    // Usa a API moderna (WindowInsetsController) em vez das antigas flags
+    // SYSTEM_UI_*, que estão depreciadas. Funciona em todas as versões do
+    // Android suportadas (minSdk 21) porque é uma classe de compatibilidade.
+    private void setupFullscreen() {
+        WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+        WindowInsetsControllerCompat controller =
+                WindowCompat.getInsetsController(getWindow(), getWindow().getDecorView());
+        if (controller != null) {
+            controller.hide(WindowInsetsCompat.Type.systemBars());
+            // Se o usuário arrastar da borda, a barra aparece temporariamente e some sozinha de novo
+            controller.setSystemBarsBehavior(
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+        }
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        // Reaplica a tela cheia sempre que a janela ganha foco de novo (ex: volta de
+        // um popup de anúncio, do app switcher, ou de uma notificação) — sem isso o
+        // Android costuma "devolver" a barra de status sozinho.
+        if (hasFocus) {
+            setupFullscreen();
+        }
+    }
+
+    @SuppressLint({"SetJavaScriptEnabled", "JavascriptInterface"})
     private void setupWebView() {
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -115,28 +147,35 @@ public class MainActivity extends AppCompatActivity {
         webView.setWebViewClient(new InternalWebViewClient());
         webView.setWebChromeClient(new InternalWebChromeClient());
         webView.setDownloadListener(new InternalDownloadListener());
+
+        // ✅ NOVO: ponte JS <-> nativo. O site já checava "window.AndroidApp" pra
+        // saber que está rodando dentro do app (em isWebView()), mas o nome nunca
+        // tinha sido registrado no lado nativo — agora existe de verdade.
+        webView.addJavascriptInterface(new WebAppInterface(), "AndroidApp");
+
+        // ✅ NOVO: só deixa o "puxar pra atualizar" iniciar quando a página estiver
+        // bem no topo. Sem isso, qualquer arrasto vertical dentro de uma área com
+        // overflow:hidden (modais/overlays como o MegaEmbed Plus) é interpretado
+        // como pull-to-refresh, e o indicador fica "preso" na metade do caminho.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            webView.setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
+                if (swipeRefresh.isEnabled()) {
+                    swipeRefresh.setEnabled(scrollY <= 0);
+                }
+            });
+        }
     }
 
-    // ✅ NOVO: Whitelist para ads que DEVEM funcionar
-    private boolean isAllowedAdNetwork(String host) {
-        String h = host.toLowerCase();
-        String[] allowedAdHosts = {
-            "omg10.com",
-            "omgads.com",
-            "adsterra.com",
-            "adsterra-server.com",
-            "adsterra.net",
-            "al5sm.com",
-            "googleadservices.com",
-            "googlesyndication.com"
-        };
-        
-        for (String adHost : allowedAdHosts) {
-            if (h.contains(adHost)) {
-                return true;
-            }
+    // ✅ NOVO: interface exposta ao JS como "window.AndroidApp".
+    // O site (megaembed.js / iptv-sync.js / app.js) chama
+    // AndroidApp.setPullRefreshEnabled(false) ao abrir um overlay em tela cheia
+    // (MegaEmbed Plus, IPTV, modais) e (true) ao fechar, travando o "arrastar"
+    // nativo enquanto esses overlays estão abertos.
+    private class WebAppInterface {
+        @JavascriptInterface
+        public void setPullRefreshEnabled(boolean enabled) {
+            runOnUiThread(() -> swipeRefresh.setEnabled(enabled));
         }
-        return false;
     }
 
     private class InternalWebViewClient extends WebViewClient {
@@ -147,26 +186,39 @@ public class MainActivity extends AppCompatActivity {
             String host = uri.getHost() == null ? "" : uri.getHost();
             String scheme = uri.getScheme() == null ? "" : uri.getScheme();
 
+            // Navegação dentro do próprio site: sempre carrega normal, nunca intercepta.
             if (host.contains(BuildConfig.SITE_HOST)) {
                 return false;
             }
 
+            // Esquemas que não são http/https (mailto:, tel:, whatsapp:, intent:, etc.)
+            // sempre vão pro sistema lidar.
             if (!scheme.equals("http") && !scheme.equals("https")) {
                 openExternally(uri);
                 return true;
             }
 
-            // ✅ NOVO: Whitelist para ads permitidos
-            if (isAllowedAdNetwork(host)) {
+            // ✅ CRÍTICO PRA ANÚNCIO FUNCIONAR: nunca intercepta navegação de
+            // IFRAME (subframe). AdSense/Monetag carregam o anúncio dentro de um
+            // iframe que costuma redirecionar internamente (pra registrar a
+            // visualização/clique). Antes, esse redirecionamento interno do
+            // iframe era tratado igual a uma navegação de tela inteira e
+            // cancelado/jogado pro Chrome — isso quebrava o carregamento do
+            // anúncio antes dele "ativar". Deixando passar (return false), o
+            // iframe completa a navegação normalmente dentro da WebView.
+            if (!request.isForMainFrame()) {
                 return false;
             }
 
-            if (isAdOrTrackingHost(host)) {
-                openExternally(uri);
-                return true;
-            }
-
-            openExternally(uri);
+            // Daqui pra baixo é navegação de tela cheia pra um domínio fora do
+            // site (ex: clique num link de anúncio, redirect de smart link).
+            // Em vez de jogar pro navegador externo (o app perde foco, o usuário
+            // sai do app, e fluxos de redirect de anúncio quebram no meio), abre
+            // dentro do próprio app numa Activity separada — mesma ideia que já
+            // era usada pros popups via window.open.
+            Intent intent = new Intent(MainActivity.this, AdPopupActivity.class);
+            intent.putExtra(AdPopupActivity.EXTRA_URL, uri.toString());
+            startActivity(intent);
             return true;
         }
 
@@ -174,6 +226,10 @@ public class MainActivity extends AppCompatActivity {
         public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
             super.onPageStarted(view, url, favicon);
             progressBar.setVisibility(View.VISIBLE);
+            // ✅ NOVO: trava o "puxar" enquanto a página está de fato recarregando,
+            // pra não dar pra arrastar de novo no meio da atualização e travar o
+            // indicador visual.
+            swipeRefresh.setEnabled(false);
         }
 
         @Override
@@ -181,6 +237,7 @@ public class MainActivity extends AppCompatActivity {
             super.onPageFinished(view, url);
             progressBar.setVisibility(View.GONE);
             swipeRefresh.setRefreshing(false);
+            swipeRefresh.setEnabled(true);
         }
 
         @Override
@@ -195,20 +252,6 @@ public class MainActivity extends AppCompatActivity {
         public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
             super.onReceivedSslError(view, handler, error);
         }
-    }
-
-    private boolean isAdOrTrackingHost(String host) {
-        String h = host.toLowerCase();
-        String[] adHosts = {
-                "doubleclick.net", "googlesyndication.com", "googleadservices.com",
-                "google-analytics.com", "googletagmanager.com", "googletagservices.com",
-                "adservice.google.com", "adnxs.com", "facebook.com/tr", "outbrain.com",
-                "taboola.com", "criteo.com", "pubmatic.com", "rubiconproject.com"
-        };
-        for (String adHost : adHosts) {
-            if (h.contains(adHost)) return true;
-        }
-        return false;
     }
 
     private void openExternally(Uri uri) {
@@ -328,6 +371,7 @@ public class MainActivity extends AppCompatActivity {
         offlineLayout.setVisibility(View.VISIBLE);
         progressBar.setVisibility(View.GONE);
         swipeRefresh.setRefreshing(false);
+        swipeRefresh.setEnabled(true);
     }
 
     @Override
