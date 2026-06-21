@@ -22,7 +22,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
-import android.view.View;
+import android.widget.FrameLayout;
 import android.widget.ProgressBar;
 import android.widget.Toast;
 
@@ -31,28 +31,12 @@ import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
-/**
- * Activity única que carrega o site em um WebView "nativo".
- *
- * Pontos importantes resolvidos aqui (motivo de não usar PWA/TWA da Microsoft/Google):
- *  1) Anúncios do AdSense não quebram o app: links de anúncio/redirecionamento e
- *     popups (window.open) são interceptados e abertos por fora (navegador externo
- *     ou Activity auxiliar), nunca derrubando a WebView principal.
- *  2) Botão voltar do Android não fecha nem recarrega o app: ele navega no
- *     histórico interno da WebView (goBack) e só fecha o app quando não há mais
- *     histórico.
- *  3) Rotação de tela NÃO recria a Activity nem recarrega a página, porque o
- *     AndroidManifest já declara configChanges para orientação/tamanho de tela —
- *     a WebView simplesmente é redimensionada, sem reload.
- *  4) Cookies de terceiros habilitados e DOM storage ligado, requisito básico
- *     para o AdSense funcionar corretamente dentro de uma WebView.
- */
 public class MainActivity extends AppCompatActivity {
 
     private WebView webView;
     private ProgressBar progressBar;
     private SwipeRefreshLayout swipeRefresh;
-    private View offlineLayout;
+    private FrameLayout offlineLayout;
 
     private ValueCallback<Uri[]> filePathCallback;
     private static final int FILE_CHOOSER_REQUEST_CODE = 5173;
@@ -91,9 +75,6 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // Só carrega a URL na primeira criação. Como a Activity não é recriada em
-        // rotação (configChanges no Manifest), isto roda exatamente UMA vez por
-        // sessão do app — é o que impede o reload ao girar a tela.
         if (savedInstanceState == null) {
             if (isOnline()) {
                 webView.loadUrl(BuildConfig.SITE_URL);
@@ -119,17 +100,13 @@ public class MainActivity extends AppCompatActivity {
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
 
-        // Necessário para o AdSense conseguir abrir popups/novas janelas (window.open)
         settings.setJavaScriptCanOpenWindowsAutomatically(true);
         settings.setSupportMultipleWindows(true);
 
-        // Cookies de terceiros são exigidos pelo AdSense para medição/segmentação
         CookieManager cookieManager = CookieManager.getInstance();
         cookieManager.setAcceptCookie(true);
         cookieManager.setAcceptThirdPartyCookies(webView, true);
 
-        // User-Agent: mantém um UA "de navegador normal", evitando que o AdSense
-        // ou o próprio site sirvam uma versão limitada por detectar WebView.
         String ua = settings.getUserAgentString();
         if (!ua.contains("StreamFlixApp")) {
             settings.setUserAgentString(ua + " StreamFlixApp/1.0");
@@ -140,7 +117,28 @@ public class MainActivity extends AppCompatActivity {
         webView.setDownloadListener(new InternalDownloadListener());
     }
 
-    /** Trata navegação dentro do app x links que devem sair (anúncios, redes sociais, etc). */
+    // ✅ NOVO: Whitelist para ads que DEVEM funcionar
+    private boolean isAllowedAdNetwork(String host) {
+        String h = host.toLowerCase();
+        String[] allowedAdHosts = {
+            "omg10.com",
+            "omgads.com",
+            "adsterra.com",
+            "adsterra-server.com",
+            "adsterra.net",
+            "al5sm.com",
+            "googleadservices.com",
+            "googlesyndication.com"
+        };
+        
+        for (String adHost : allowedAdHosts) {
+            if (h.contains(adHost)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private class InternalWebViewClient extends WebViewClient {
 
         @Override
@@ -149,26 +147,25 @@ public class MainActivity extends AppCompatActivity {
             String host = uri.getHost() == null ? "" : uri.getHost();
             String scheme = uri.getScheme() == null ? "" : uri.getScheme();
 
-            // Mantém navegação dentro do app para o próprio domínio do site
             if (host.contains(BuildConfig.SITE_HOST)) {
                 return false;
             }
 
-            // Esquemas que não são http/https (whatsapp:, intent:, tel:, mailto:, market:, etc.)
             if (!scheme.equals("http") && !scheme.equals("https")) {
                 openExternally(uri);
                 return true;
             }
 
-            // Domínios de anúncio/rastreamento conhecidos: sempre abrir por fora,
-            // nunca dentro da WebView principal do app.
+            // ✅ NOVO: Whitelist para ads permitidos
+            if (isAllowedAdNetwork(host)) {
+                return false;
+            }
+
             if (isAdOrTrackingHost(host)) {
                 openExternally(uri);
                 return true;
             }
 
-            // Qualquer outro domínio externo (ex: login social, redirecionamento de
-            // pagamento) também abre por fora para não "perder" a navegação do app.
             openExternally(uri);
             return true;
         }
@@ -196,7 +193,6 @@ public class MainActivity extends AppCompatActivity {
 
         @Override
         public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
-            // Mantém a validação padrão (segura); não ignora erros de SSL.
             super.onReceivedSslError(view, handler, error);
         }
     }
@@ -224,7 +220,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    /** Trata uploads de arquivo, progresso, e principalmente popups de anúncio (window.open). */
     private class InternalWebChromeClient extends WebChromeClient {
 
         @Override
@@ -236,7 +231,6 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        // Upload de arquivos (ex: foto de perfil, comprovante de pagamento)
         @Override
         public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> callback, FileChooserParams params) {
             filePathCallback = callback;
@@ -250,9 +244,6 @@ public class MainActivity extends AppCompatActivity {
             return true;
         }
 
-        // CHAVE para anúncios que usam window.open()/target=_blank: ao invés de a
-        // WebView travar ou o app "sumir", abrimos o popup numa Activity separada
-        // que sabe se fechar sozinha. O app principal nunca é afetado.
         @Override
         public boolean onCreateWindow(WebView view, boolean isDialog, boolean isUserGesture, Message resultMsg) {
             WebView.HitTestResult result = view.getHitTestResult();
@@ -265,9 +256,6 @@ public class MainActivity extends AppCompatActivity {
                 return false;
             }
 
-            // Quando a URL não vem no HitTestResult (alguns SDKs de anúncio fazem
-            // isso), criamos uma WebView "transporte" temporária só para capturar
-            // a URL de destino e então delegamos à Activity de popup / navegador.
             WebView transport = new WebView(MainActivity.this);
             transport.getSettings().setJavaScriptEnabled(true);
             transport.setWebViewClient(new WebViewClient() {
@@ -315,12 +303,6 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    /**
-     * Botão voltar do Android: navega no histórico da própria WebView.
-     * Só minimiza o app (não fecha o processo de forma abrupta) quando não há
-     * mais histórico para voltar — isso evita o problema de "voltar do anúncio
-     * fecha o app" que acontecia no wrapper PWA.
-     */
     private void setupBackPress() {
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
@@ -348,9 +330,6 @@ public class MainActivity extends AppCompatActivity {
         swipeRefresh.setRefreshing(false);
     }
 
-    // Pausa/retoma o WebView junto com o ciclo de vida da Activity (evita que
-    // vídeos/áudio continuem tocando em segundo plano e economiza bateria),
-    // SEM jamais destruir ou recarregar a página.
     @Override
     protected void onPause() {
         webView.onPause();

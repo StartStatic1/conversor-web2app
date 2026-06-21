@@ -3,6 +3,7 @@ package com.streamflix.app;
 import android.annotation.SuppressLint;
 import android.os.Bundle;
 import android.view.View;
+import android.webkit.CookieManager;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
@@ -13,12 +14,6 @@ import android.widget.ProgressBar;
 import androidx.activity.OnBackPressedCallback;
 import androidx.appcompat.app.AppCompatActivity;
 
-/**
- * Activity isolada só para exibir os popups de anúncio (window.open / target=_blank).
- * Fica completamente separada da WebView principal do app: se o anúncio travar,
- * redirecionar em cascata, ou o usuário simplesmente fechar, o app principal
- * continua exatamente como estava, sem reload e sem fechar.
- */
 public class AdPopupActivity extends AppCompatActivity {
 
     public static final String EXTRA_URL = "extra_url";
@@ -36,14 +31,20 @@ public class AdPopupActivity extends AppCompatActivity {
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
+        settings.setDatabaseEnabled(true);
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
         settings.setSupportMultipleWindows(false);
+        settings.setAllowContentAccess(true);
+
+        // ✅ NOVO: Habilitar cookies de terceiros para ads
+        CookieManager cookieManager = CookieManager.getInstance();
+        cookieManager.setAcceptCookie(true);
+        cookieManager.setAcceptThirdPartyCookies(webView, true);
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                // Deixa navegar livremente dentro deste popup; é isolado do app principal.
                 return false;
             }
 
@@ -73,7 +74,6 @@ public class AdPopupActivity extends AppCompatActivity {
             finish();
         }
 
-        // Voltar nesta tela apenas fecha o popup, nunca afeta o app principal.
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
@@ -84,6 +84,18 @@ public class AdPopupActivity extends AppCompatActivity {
                 }
             }
         });
+    }
+
+    @Override
+    protected void onPause() {
+        webView.onPause();
+        super.onPause();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        webView.onResume();
     }
 
     @Override
