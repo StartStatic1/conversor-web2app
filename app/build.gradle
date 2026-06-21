@@ -1,0 +1,42 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.streamflix.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.streamflix.app"
+        minSdk 21
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+
+        // URL do seu site - troque aqui se mudar de domínio
+        buildConfigField "String", "SITE_URL", "\"https://streamflix-red.zeabur.app\""
+        buildConfigField "String", "SITE_HOST", "\"streamflix-red.zeabur.app\""
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.1.0'
+    implementation 'com.google.android.material:material:1.12.0'
+}
