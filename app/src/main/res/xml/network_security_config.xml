@@ -1,5 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
+    <!-- ✅ NOVO: algumas redes de anúncio (Monetag/Adsterra) ainda têm hops de
+         redirect em HTTP puro dentro da cadeia até a página final em HTTPS.
+         Com cleartext bloqueado pra tudo (como estava antes), qualquer um
+         desses hops em HTTP falha silenciosamente e quebra o anúncio inteiro
+         no meio do caminho. Aqui libera HTTP só pros domínios de anúncio
+         conhecidos — o resto do app (e o site) continua HTTPS-only. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">omg10.com</domain>
+        <domain includeSubdomains="true">omgads.com</domain>
+        <domain includeSubdomains="true">adsterra.com</domain>
+        <domain includeSubdomains="true">adsterra-server.com</domain>
+        <domain includeSubdomains="true">adsterra.net</domain>
+        <domain includeSubdomains="true">al5sm.com</domain>
+        <domain includeSubdomains="true">5gvci.com</domain>
+        <domain includeSubdomains="true">googleadservices.com</domain>
+        <domain includeSubdomains="true">googlesyndication.com</domain>
+        <domain includeSubdomains="true">doubleclick.net</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+
     <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
