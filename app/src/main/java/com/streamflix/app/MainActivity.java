@@ -22,7 +22,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
-import android.widget.FrameLayout;
+import android.view.View;
 import android.widget.ProgressBar;
 import android.widget.Toast;
 
@@ -52,7 +52,7 @@ public class MainActivity extends AppCompatActivity {
     private WebView webView;
     private ProgressBar progressBar;
     private SwipeRefreshLayout swipeRefresh;
-    private FrameLayout offlineLayout;
+    private View offlineLayout;
 
     private ValueCallback<Uri[]> filePathCallback;
     private static final int FILE_CHOOSER_REQUEST_CODE = 5173;
