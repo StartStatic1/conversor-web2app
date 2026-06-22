@@ -22,6 +22,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
+import android.view.View;
 import android.widget.ProgressBar;
 import android.widget.Toast;
 
@@ -63,6 +64,24 @@ public class MainActivity extends AppCompatActivity {
         setupImmersiveMode();
         setContentView(R.layout.activity_main);
 
+    
+private void setupImmersiveMode() {
+        View decorView = getWindow().getDecorView();
+        decorView.setSystemUiVisibility(
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) setupImmersiveMode();
+    }
+
         webView = findViewById(R.id.webView);
         progressBar = findViewById(R.id.progressBar);
         swipeRefresh = findViewById(R.id.swipeRefresh);
@@ -83,8 +102,10 @@ public class MainActivity extends AppCompatActivity {
         });
 
         // Desativado: o gesto de puxar pra baixo estava conflitando com o
-        // scroll de listas dentro do site (ex: lista de episódios em séries).
+        // scroll de listas dentro do site (ex: lista de episódios).
         swipeRefresh.setEnabled(false);
+            }
+        });
 
         // Só carrega a URL na primeira criação. Como a Activity não é recriada em
         // rotação (configChanges no Manifest), isto roda exatamente UMA vez por
@@ -147,16 +168,6 @@ public class MainActivity extends AppCompatActivity {
             // Mantém navegação dentro do app para o próprio domínio do site
             if (host.contains(BuildConfig.SITE_HOST)) {
                 return false;
-            }
-
-            // Domínios de player externo que também devem abrir DENTRO do app
-            // (ex: o site de embed do player de vídeo). Adicione outros aqui
-            // separados por vírgula se o site usar mais de um player.
-            String[] allowedEmbedHosts = { "megaembed.com" };
-            for (String allowed : allowedEmbedHosts) {
-                if (host.contains(allowed)) {
-                    return false;
-                }
             }
 
             // Esquemas que não são http/https (whatsapp:, intent:, tel:, mailto:, market:, etc.)
@@ -366,31 +377,6 @@ public class MainActivity extends AppCompatActivity {
     protected void onResume() {
         super.onResume();
         webView.onResume();
-    }
-
-    /**
-     * Esconde a barra de status (relógio/bateria) e a barra de navegação,
-     * deixando o app em tela cheia imersiva. Reaplicado sempre que a janela
-     * ganha foco de novo (ex: voltar de outro app), porque o Android tende a
-     * restaurar as barras automaticamente.
-     */
-    private void setupImmersiveMode() {
-        View decorView = getWindow().getDecorView();
-        decorView.setSystemUiVisibility(
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                | View.SYSTEM_UI_FLAG_FULLSCREEN
-                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
-    }
-
-    @Override
-    public void onWindowFocusChanged(boolean hasFocus) {
-        super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) {
-            setupImmersiveMode();
-        }
     }
 
     @Override
